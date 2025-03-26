@@ -85,6 +85,26 @@ function objectsToSheet(array, sheet, headerRowIndex = 1, startRowIndex = 3, mod
  * @param {boolean} [options.pivot=false] - If true, pivot the table (flip rows/columns).
  * @param {boolean} [options.preserveFormulas=true] - If true, preserve existing formulas.
  */
+/**
+ * Takes an array of objects and puts them into rows or columns in a specified sheet
+ * while preserving formulas.
+ * 
+ * Optional settings: 
+ *   - Set mode="overwrite" (default), "append" or "overlay" to control insertion behavior.
+ *   - Set pivot=true to transpose data (default is false).
+ *   - Set preserveFormulas=true to preserve existing formulas (default is true).
+ * 
+ * @param {Object[]} array - The array of objects to be inserted into the sheet.
+ * @param {GoogleAppsScript.Spreadsheet.Sheet} sheet - The sheet object where data will be inserted.
+ * @param {number} headerIndex - In normal mode, the row for headers.
+ *                               In pivot mode, this is the column from which header keys are read.
+ * @param {number} startIndex - In normal mode, the row where data starts.
+ *                              In pivot mode, this becomes the starting column index for object data.
+ * @param {Object} [options] - Optional settings.
+ * @param {("overwrite"|"append"|"overlay")} [options.mode="overwrite"] - The insertion mode.
+ * @param {boolean} [options.pivot=false] - If true, pivot the table (flip rows/columns).
+ * @param {boolean} [options.preserveFormulas=true] - If true, preserve existing formulas.
+ */
 function objectsToSheetV2(array, sheet, headerIndex = 1, startIndex = 3, options = {}) {
   const { mode = "overwrite", pivot = false, preserveFormulas = true } = options;
   
@@ -157,13 +177,49 @@ function objectsToSheetV2(array, sheet, headerIndex = 1, startIndex = 3, options
           sheet.getRange(startIndex, 1, dataToInsert.length, headers.length).setValues(dataToInsert);
         }
       }
+      
     } else if (mode === "append") {
       const lastRow = getLastNonEmptyRow(sheet);
       if (dataToInsert.length > 0) {
         sheet.getRange(lastRow + 1, 1, dataToInsert.length, headers.length).setValues(dataToInsert);
       }
+      
+    } else if (mode === "overlay") {
+      // Overlay mode: update only cells where the new object provides a value,
+      // leaving existing content (and formulas) intact.
+      for (let i = 0; i < dataToInsert.length; i++) {
+        const targetRow = startIndex + i;
+        // Read the current row values and formulas (if preserving formulas)
+        const currentRange = sheet.getRange(targetRow, 1, 1, headers.length);
+        const currentValues = currentRange.getValues()[0];
+        const currentFormulas = preserveFormulas ? currentRange.getFormulas()[0] : null;
+        const newRow = [];
+        
+        // For each header, overlay new data if provided
+        for (let j = 0; j < headers.length; j++) {
+          const header = headers[j];
+          if (array[i].hasOwnProperty(header)) {
+            newRow.push(array[i][header]);
+          } else {
+            newRow.push(currentValues[j]);
+          }
+        }
+        
+        // Write the combined row back to the sheet
+        sheet.getRange(targetRow, 1, 1, headers.length).setValues([newRow]);
+        
+        // If preserving formulas, restore any formula that was present in cells where no new value was given
+        if (preserveFormulas && currentFormulas) {
+          for (let j = 0; j < headers.length; j++) {
+            if (!array[i].hasOwnProperty(headers[j]) && currentFormulas[j] !== "") {
+              sheet.getRange(targetRow, j + 1).setFormula(currentFormulas[j]);
+            }
+          }
+        }
+      }
+      
     } else {
-      throw new Error("Invalid mode. Use 'overwrite' or 'append'.");
+      throw new Error("Invalid mode. Use 'overwrite', 'append' or 'overlay'.");
     }
     
   } else {
@@ -182,6 +238,7 @@ function objectsToSheetV2(array, sheet, headerIndex = 1, startIndex = 3, options
         const columnData = properties.map(prop => [obj.hasOwnProperty(prop) ? obj[prop] : ""]);
         sheet.getRange(1, targetCol, numProperties, 1).setValues(columnData);
       });
+      
     } else if (mode === "overwrite") {
       array.forEach((obj, index) => {
         const targetCol = startIndex + index;
@@ -209,8 +266,43 @@ function objectsToSheetV2(array, sheet, headerIndex = 1, startIndex = 3, options
           sheet.getRange(1, targetCol, numProperties, 1).setValues(columnData);
         }
       });
+      
+    } else if (mode === "overlay") {
+      // Overlay mode for pivot: update only cells where the new object provides a value,
+      // leaving existing content (and formulas) intact.
+      array.forEach((obj, index) => {
+        const targetCol = startIndex + index;
+        // Read current column values and formulas
+        const currentRange = sheet.getRange(1, targetCol, numProperties, 1);
+        const currentValues = currentRange.getValues();
+        const currentFormulas = preserveFormulas ? currentRange.getFormulas() : null;
+        const newColData = [];
+        
+        // For each property, overlay new data if provided
+        for (let i = 0; i < numProperties; i++) {
+          const prop = properties[i];
+          if (obj.hasOwnProperty(prop)) {
+            newColData.push([obj[prop]]);
+          } else {
+            newColData.push(currentValues[i]);
+          }
+        }
+        
+        // Write the combined column data back to the sheet
+        sheet.getRange(1, targetCol, numProperties, 1).setValues(newColData);
+        
+        // Restore formulas if preserving and no new value was provided
+        if (preserveFormulas && currentFormulas) {
+          for (let i = 0; i < numProperties; i++) {
+            if (!obj.hasOwnProperty(properties[i]) && currentFormulas[i][0] !== "") {
+              sheet.getRange(i + 1, targetCol).setFormula(currentFormulas[i][0]);
+            }
+          }
+        }
+      });
+      
     } else {
-      throw new Error("Invalid mode. Use 'overwrite' or 'append'.");
+      throw new Error("Invalid mode. Use 'overwrite', 'append' or 'overlay'.");
     }
   }
 }
