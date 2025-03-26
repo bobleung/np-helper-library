@@ -67,30 +67,9 @@ function objectsToSheet(array, sheet, headerRowIndex = 1, startRowIndex = 3, mod
  * while preserving formulas.
  * 
  * Optional settings: 
- *                            Set mode="overwrite" (default) or "append" to control insertion behavior.
- *                            Set pivot=true to transpose data (default is false).
- *                            Set preserveFormulas=true to preserve existing formulas (default is true).
- * 
- * @param {Object[]} array - The array of objects to be inserted into the sheet.
- * @param {GoogleAppsScript.Spreadsheet.Sheet} sheet - The sheet object where data will be inserted.
- * @param {number} headerIndex - In normal mode, the row for headers.
- *                               In pivot mode, this is the column from which header keys are read.
- * @param {number} startIndex - In normal mode, the row where data starts.
- *                              In pivot mode, this becomes the starting column index for object data.
- * @param {Object} [options] - Optional settings: 
- *                            Set mode="overwrite" (default) or "append" to control insertion behavior.
- *                            Set pivot=true to transpose data (default is false).
- *                            Set preserveFormulas=true to preserve existing formulas (default is true).
- * @param {("overwrite"|"append")} [options.mode="overwrite"] - The insertion mode.
- * @param {boolean} [options.pivot=false] - If true, pivot the table (flip rows/columns).
- * @param {boolean} [options.preserveFormulas=true] - If true, preserve existing formulas.
- */
-/**
- * Takes an array of objects and puts them into rows or columns in a specified sheet
- * while preserving formulas.
- * 
- * Optional settings: 
  *   - Set mode="overwrite" (default), "append" or "overlay" to control insertion behavior.
+ *   - In overlay mode, if preserveFormulas is false a batch update is used for efficiency,
+ *     but if preserveFormulas is true each row/column is processed individually to restore formulas.
  *   - Set pivot=true to transpose data (default is false).
  *   - Set preserveFormulas=true to preserve existing formulas (default is true).
  * 
@@ -187,29 +166,36 @@ function objectsToSheetV2(array, sheet, headerIndex = 1, startIndex = 3, options
     } else if (mode === "overlay") {
       // Overlay mode: update only cells where the new object provides a value,
       // leaving existing content (and formulas) intact.
-      for (let i = 0; i < dataToInsert.length; i++) {
-        const targetRow = startIndex + i;
-        // Read the current row values and formulas (if preserving formulas)
-        const currentRange = sheet.getRange(targetRow, 1, 1, headers.length);
-        const currentValues = currentRange.getValues()[0];
-        const currentFormulas = preserveFormulas ? currentRange.getFormulas()[0] : null;
-        const newRow = [];
-        
-        // For each header, overlay new data if provided
-        for (let j = 0; j < headers.length; j++) {
-          const header = headers[j];
-          if (array[i].hasOwnProperty(header)) {
-            newRow.push(array[i][header]);
-          } else {
-            newRow.push(currentValues[j]);
+      if (!preserveFormulas) {
+        // Batch update overlay mode for efficiency when not preserving formulas.
+        const range = sheet.getRange(startIndex, 1, dataToInsert.length, headers.length);
+        const currentData = range.getValues();
+        // Overlay new values onto currentData
+        for (let i = 0; i < dataToInsert.length; i++) {
+          for (let j = 0; j < headers.length; j++) {
+            if (array[i].hasOwnProperty(headers[j])) {
+              currentData[i][j] = array[i][headers[j]];
+            }
           }
         }
-        
-        // Write the combined row back to the sheet
-        sheet.getRange(targetRow, 1, 1, headers.length).setValues([newRow]);
-        
-        // If preserving formulas, restore any formula that was present in cells where no new value was given
-        if (preserveFormulas && currentFormulas) {
+        // Write updated data back in one batch
+        range.setValues(currentData);
+      } else {
+        // Process each row individually if preserving formulas.
+        for (let i = 0; i < dataToInsert.length; i++) {
+          const targetRow = startIndex + i;
+          const currentRange = sheet.getRange(targetRow, 1, 1, headers.length);
+          const currentValues = currentRange.getValues()[0];
+          const currentFormulas = currentRange.getFormulas()[0];
+          const newRow = [];
+          for (let j = 0; j < headers.length; j++) {
+            if (array[i].hasOwnProperty(headers[j])) {
+              newRow.push(array[i][headers[j]]);
+            } else {
+              newRow.push(currentValues[j]);
+            }
+          }
+          currentRange.setValues([newRow]);
           for (let j = 0; j < headers.length; j++) {
             if (!array[i].hasOwnProperty(headers[j]) && currentFormulas[j] !== "") {
               sheet.getRange(targetRow, j + 1).setFormula(currentFormulas[j]);
@@ -231,13 +217,21 @@ function objectsToSheetV2(array, sheet, headerIndex = 1, startIndex = 3, options
     const numProperties = properties.length;
     
     if (mode === "append") {
-      // Cache base column once.
+      // Updated for efficiency: Use a single batch write.
       const baseCol = getLastNonEmptyColumn(sheet, startIndex) + 1;
-      array.forEach((obj, index) => {
-        const targetCol = baseCol + index;
-        const columnData = properties.map(prop => [obj.hasOwnProperty(prop) ? obj[prop] : ""]);
-        sheet.getRange(1, targetCol, numProperties, 1).setValues(columnData);
-      });
+      const numNewCols = array.length;
+      const batchData = [];
+      // Build a 2D array with dimensions numProperties x numNewCols.
+      for (let i = 0; i < numProperties; i++) {
+        const rowData = [];
+        const prop = properties[i];
+        for (let j = 0; j < numNewCols; j++) {
+          rowData.push(array[j].hasOwnProperty(prop) ? array[j][prop] : "");
+        }
+        batchData.push(rowData);
+      }
+      // Write the entire block at once.
+      sheet.getRange(1, baseCol, numProperties, numNewCols).setValues(batchData);
       
     } else if (mode === "overwrite") {
       array.forEach((obj, index) => {
@@ -270,36 +264,48 @@ function objectsToSheetV2(array, sheet, headerIndex = 1, startIndex = 3, options
     } else if (mode === "overlay") {
       // Overlay mode for pivot: update only cells where the new object provides a value,
       // leaving existing content (and formulas) intact.
-      array.forEach((obj, index) => {
-        const targetCol = startIndex + index;
-        // Read current column values and formulas
-        const currentRange = sheet.getRange(1, targetCol, numProperties, 1);
-        const currentValues = currentRange.getValues();
-        const currentFormulas = preserveFormulas ? currentRange.getFormulas() : null;
-        const newColData = [];
-        
-        // For each property, overlay new data if provided
-        for (let i = 0; i < numProperties; i++) {
-          const prop = properties[i];
-          if (obj.hasOwnProperty(prop)) {
-            newColData.push([obj[prop]]);
-          } else {
-            newColData.push(currentValues[i]);
+      if (!preserveFormulas) {
+        // Batch update overlay mode for pivot when not preserving formulas.
+        const numNewCols = array.length;
+        const range = sheet.getRange(1, startIndex, numProperties, numNewCols);
+        const currentData = range.getValues();
+        for (let j = 0; j < numNewCols; j++) {
+          const obj = array[j];
+          for (let i = 0; i < numProperties; i++) {
+            const prop = properties[i];
+            if (obj.hasOwnProperty(prop)) {
+              currentData[i][j] = obj[prop];
+            }
           }
         }
-        
-        // Write the combined column data back to the sheet
-        sheet.getRange(1, targetCol, numProperties, 1).setValues(newColData);
-        
-        // Restore formulas if preserving and no new value was provided
-        if (preserveFormulas && currentFormulas) {
+        range.setValues(currentData);
+      } else {
+        // Process each column individually if preserving formulas.
+        array.forEach((obj, index) => {
+          const targetCol = startIndex + index;
+          const currentRange = sheet.getRange(1, targetCol, numProperties, 1);
+          const currentValues = currentRange.getValues();
+          const currentFormulas = currentRange.getFormulas();
+          const newColData = [];
+          
+          for (let i = 0; i < numProperties; i++) {
+            const prop = properties[i];
+            if (obj.hasOwnProperty(prop)) {
+              newColData.push([obj[prop]]);
+            } else {
+              newColData.push(currentValues[i]);
+            }
+          }
+          
+          currentRange.setValues(newColData);
+          
           for (let i = 0; i < numProperties; i++) {
             if (!obj.hasOwnProperty(properties[i]) && currentFormulas[i][0] !== "") {
               sheet.getRange(i + 1, targetCol).setFormula(currentFormulas[i][0]);
             }
           }
-        }
-      });
+        });
+      }
       
     } else {
       throw new Error("Invalid mode. Use 'overwrite', 'append' or 'overlay'.");
