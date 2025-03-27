@@ -328,12 +328,14 @@ function objectsToSheetV2(array, sheet, headerIndex = 1, startIndex = 3, options
  *                                Set lastColumn to limit processing 
  *                               (e.g., "Z"), mute=true (default) to suppress logging, useDisplayDates=true (default) 
  *                               to replace date objects with displayed text, pivot=false (default) to control 
- *                               table orientation, keepNull=false (default) to include empty cells as null values.
+ *                               table orientation, keepNull=false (default) to include empty cells as null values,
+ *                               keepEmpty=false (default) to include empty cells as empty strings.
  * @param {string|null} [options.lastColumn=null] - Last column to process, e.g., "Z".
  * @param {boolean} [options.mute=true] - Suppress logging.
  * @param {boolean} [options.useDisplayDates=true] - Replace date objects with displayed text.
  * @param {boolean} [options.pivot=false] - If true, pivot the table (flip rows/columns) before processing.
  * @param {boolean} [options.keepNull=false] - If true, include empty cells as null values in the result objects.
+ * @param {boolean} [options.keepEmpty=false] - If true, include empty cells as empty strings in the result objects.
  * @return {Object[]} - Array of objects representing the sheet data.
  */
 function sheetToObjectsV2(sheet, headerIndex = 1, startIndex = 3, options = {}) {
@@ -342,10 +344,16 @@ function sheetToObjectsV2(sheet, headerIndex = 1, startIndex = 3, options = {}) 
     mute: true,
     useDisplayDates: true,
     pivot: false,
-    keepNull: false
+    keepNull: false,
+    keepEmpty: false
   };
 
-  const { lastColumn, mute, useDisplayDates, pivot, keepNull } = { ...baseOptions, ...options };
+  const { lastColumn, mute, useDisplayDates, pivot, keepNull, keepEmpty } = { ...baseOptions, ...options };
+
+  // Validate that keepNull and keepEmpty aren't both true
+  if (keepNull && keepEmpty) {
+    Logger.log("Warning: Both keepNull and keepEmpty are set to true. keepNull will take precedence.");
+  }
 
   if (!sheet) {
     Logger.log("Sheet not found");
@@ -450,6 +458,9 @@ function sheetToObjectsV2(sheet, headerIndex = 1, startIndex = 3, options = {}) 
       } else if (keepNull) {
         // If keepNull is true, include empty cells as null values
         obj[header] = null;
+      } else if (keepEmpty) {
+        // If keepEmpty is true and keepNull is false, include empty cells as empty strings
+        obj[header] = "";
       }
     });
     return obj;
