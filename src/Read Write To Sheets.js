@@ -328,11 +328,12 @@ function objectsToSheetV2(array, sheet, headerIndex = 1, startIndex = 3, options
  *                                Set lastColumn to limit processing 
  *                               (e.g., "Z"), mute=true (default) to suppress logging, useDisplayDates=true (default) 
  *                               to replace date objects with displayed text, pivot=false (default) to control 
- *                               table orientation.
+ *                               table orientation, keepNull=false (default) to include empty cells as null values.
  * @param {string|null} [options.lastColumn=null] - Last column to process, e.g., "Z".
  * @param {boolean} [options.mute=true] - Suppress logging.
  * @param {boolean} [options.useDisplayDates=true] - Replace date objects with displayed text.
  * @param {boolean} [options.pivot=false] - If true, pivot the table (flip rows/columns) before processing.
+ * @param {boolean} [options.keepNull=false] - If true, include empty cells as null values in the result objects.
  * @return {Object[]} - Array of objects representing the sheet data.
  */
 function sheetToObjectsV2(sheet, headerIndex = 1, startIndex = 3, options = {}) {
@@ -340,10 +341,11 @@ function sheetToObjectsV2(sheet, headerIndex = 1, startIndex = 3, options = {}) 
     lastColumn: null,
     mute: true,
     useDisplayDates: true,
-    pivot: false
+    pivot: false,
+    keepNull: false
   };
 
-  const { lastColumn, mute, useDisplayDates, pivot } = { ...baseOptions, ...options };
+  const { lastColumn, mute, useDisplayDates, pivot, keepNull } = { ...baseOptions, ...options };
 
   if (!sheet) {
     Logger.log("Sheet not found");
@@ -442,8 +444,12 @@ function sheetToObjectsV2(sheet, headerIndex = 1, startIndex = 3, options = {}) 
           return;
         }
       }
+      
       if (value !== null && value !== "" && value !== undefined) {
         obj[header] = value;
+      } else if (keepNull) {
+        // If keepNull is true, include empty cells as null values
+        obj[header] = null;
       }
     });
     return obj;
